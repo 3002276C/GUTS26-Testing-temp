@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Gyro test - phone</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#0f1117;color:#e8e8ee;padding:20px;text-align:center}
+button{background:#3b82f6;color:#fff;border:0;padding:18px 28px;border-radius:12px;font-size:20px;margin:16px 0;width:100%}
+button:disabled{background:#394150}
+pre{text-align:left;font-size:14px;white-space:pre-wrap;background:#1a1d27;padding:12px;border-radius:10px}
+.ok{color:#22c55e}.bad{color:#ef4444}.warn{color:#f59e0b}
+#st{font-size:20px;font-weight:600;margin:10px 0}
+</style></head><body>
+<h2>Gyro test (phone)</h2>
+<div id="st" class="warn">Ready</div>
+<button id="btn">Enable sensors</button>
+<pre id="info">tap the button and allow motion access</pre>
+<script>
+const $=id=>document.getElementById(id);
+const id=new URLSearchParams(location.search).get('id');
+const S={o:null,r:null,g:null,a:null,iv:null};
+let conn,peer,sent=0,gotO=false,gotM=false;
+function set(t,c){$('st').textContent=t;$('st').className=c;}
+
+$('btn').onclick=async()=>{
+ if(!id){set('No id in URL. Scan the QR code again.','bad');return;}
+ try{
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
+   const r1=await DeviceMotionEvent.requestPermission();
+   let r2='granted';
+   if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')
+    r2=await DeviceOrientationEvent.requestPermission();
+   if(r1!=='granted'||r2!=='granted'){set('Motion denied. Close the tab, reopen, tap Allow.','bad');return;}
+  }
+ }catch(e){set('Permission error: '+e.message,'bad');return;}
+ $('btn').disabled=true;
+ try{window._wl=await navigator.wakeLock.request('screen');}catch(e){}
+ window.addEventListener('deviceorientation',e=>{gotO=true;S.o=[e.alpha,e.beta,e.gamma];});
+ window.addEventListener('devicemotion',e=>{
+  gotM=true;S.iv=e.interval;
+  const rr=e.rotationRate,ag=e.accelerationIncludingGravity,a=e.acceleration;
+  S.r=rr?[rr.alpha,rr.beta,rr.gamma]:null;
+  S.g=ag?[ag.x,ag.y,ag.z]:null;
+  S.a=a?[a.x,a.y,a.z]:null;
+ });
+ set('Connecting...','warn');
+ peer=new Peer();
+ peer.on('open',()=>{
+  conn=peer.connect(id,{reliable:false,serialization:'json'});
+  conn.on('open',()=>{
+   set('Connected. Move the phone.','ok');
+   conn.send({info:{ua:navigator.userAgent,secure:window.isSecureContext}});
+   setInterval(tick,33);
+  });
+  conn.on('data',m=>{if(m.ping!==undefined)conn.send({pong:m.ping});});
+  conn.on('close',()=>set('Laptop disconnected','bad'));
+ });
+ peer.on('error',e=>set('Relay error: '+e.type,'bad'));
+ setTimeout(()=>{if(!gotO&&!gotM)set('No sensor data. Check Safari motion permission.','bad');},3000);
+};
+
+function tick(){
+ if(!conn||!conn.open)return;
+ conn.send({s:S});sent++;
+ const f=a=>a?a.map(x=>x==null?'n/a':x.toFixed(1)).join(', '):'n/a';
+ $('info').textContent='orientation: '+f(S.o)+'\nrotation: '+f(S.r)+'\ngravity: '+f(S.g)+'\nsent: '+sent;
+}
+</script></body></html>

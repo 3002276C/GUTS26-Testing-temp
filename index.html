@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Gyro test - laptop</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#0f1117;color:#e8e8ee;padding:16px}
+.card{background:#1a1d27;border-radius:10px;padding:12px;margin:10px 0}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>div{flex:1;min-width:300px}
+#qr{background:#fff;display:inline-block;padding:8px;border-radius:8px}
+pre{margin:0;font-size:13px;white-space:pre-wrap}
+canvas{width:100%;background:#0b0d13;border-radius:10px;display:block}
+.ok{color:#22c55e}.bad{color:#ef4444}.warn{color:#f59e0b}
+#big{font-size:22px;font-weight:600;margin:6px 0}
+button{background:#3b82f6;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-size:14px;cursor:pointer}
+</style></head><body>
+<h2>iPhone gyro test (laptop)</h2>
+<div class="card">
+ <div id="big" class="warn">Connecting to relay...</div>
+ <div id="qr"></div><pre id="url"></pre>
+ <div>Scan with the iPhone camera, open in Safari, tap <b>Enable sensors</b>.</div>
+</div>
+<div class="row">
+ <div class="card"><b>3D orientation</b> <button id="zero">Zero heading</button>
+  <canvas id="c3" width="420" height="320"></canvas></div>
+ <div class="card"><b>Traces: beta (red), gamma (green), spin rate (blue)</b>
+  <canvas id="ch" width="420" height="320"></canvas></div>
+</div>
+<div class="row">
+ <div class="card"><b>Readings</b><pre id="read">-</pre></div>
+ <div class="card"><b>Health and verdict</b><pre id="health">-</pre></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let msgs=0,rate=0,rtt=null,lastMsg=0,d=null,info=null,zeroA=0;
+const H=[];const N=300;
+const peer=new Peer();
+peer.on('open',id=>{
+ const base=location.href.split('?')[0].replace(/[^\/]*$/,'');
+ const url=base+'phone.html?id='+id;
+ $('url').textContent=url;
+ new QRCode($('qr'),{text:url,width:180,height:180});
+ $('big').textContent='Waiting for phone...';
+});
+peer.on('error',e=>{$('big').className='bad';$('big').textContent='Relay error: '+e.type;});
+peer.on('connection',c=>{
+ window.conn=c;
+ c.on('open',()=>{$('big').className='ok';$('big').textContent='Phone connected';});
+ c.on('data',m=>{
+  if(m.info)info=m.info;
+  if(m.s){d=m.s;msgs++;lastMsg=performance.now();
+   const rr=d.r?Math.hypot(d.r[0]||0,d.r[1]||0,d.r[2]||0):0;
+   H.push([d.o?d.o[1]:0,d.o?d.o[2]:0,rr]);if(H.length>N)H.shift();}
+  if(m.pong)rtt=performance.now()-m.pong;
+ });
+ c.on('close',()=>{$('big').className='bad';$('big').textContent='Phone disconnected';});
+});
+$('zero').onclick=()=>{if(d&&d.o)zeroA=d.o[0]||0;};
+setInterval(()=>{
+ rate=msgs;msgs=0;
+ if(window.conn&&window.conn.open)window.conn.send({ping:performance.now()});
+ health();
+},1000);
+
+function fmt(a,n=1){return a?a.map(x=>x==null?'  n/a':x.toFixed(n).padStart(7)).join(' '):'no data';}
+function health(){
+ const live=performance.now()-lastMsg<2000;
+ const hasO=d&&d.o&&d.o[1]!=null;
+ const hasR=d&&d.r&&d.r[0]!=null;
+ const hasA=d&&d.g&&d.g[0]!=null;
+ const t=(ok,txt)=>'<span class="'+(ok?'ok':'bad')+'">'+txt+'</span>';
+ $('read').textContent=
+  'orientation  alpha  beta  gamma (deg)\n  '+fmt(d&&d.o)+
+  '\n\nrotationRate  a     b     g   (deg/s)\n  '+fmt(d&&d.r)+
+  '\n\ngravity accel x     y     z   (m/s2)\n  '+fmt(d&&d.g,2)+
+  '\n\nlinear accel  x     y     z   (m/s2)\n  '+fmt(d&&d.a,2)+
+  '\n\ndevicemotion interval: '+(d&&d.iv!=null?d.iv+' ms':'n/a');
+ $('health').innerHTML=
+  'messages/sec      : '+t(rate>=20&&live,rate)+' (need 20+)\n'+
+  'round trip        : '+(rtt==null?'-':t(rtt<120,rtt.toFixed(0)+' ms'))+'\n'+
+  'orientation (tilt): '+t(hasO,hasO?'pass':'fail')+'\n'+
+  'gyroscope rate    : '+t(hasR,hasR?'pass':'fail')+'\n'+
+  'accelerometer     : '+t(hasA,hasA?'pass':'fail')+'\n'+
+  (info?'\nphone: '+info.ua.slice(0,80)+'\nsecure context: '+info.secure:'');
+}
+
+function matMul(a,b){const r=[];for(let i=0;i<3;i++){r[i]=[];for(let j=0;j<3;j++){r[i][j]=a[i][0]*b[0][j]+a[i][1]*b[1][j]+a[i][2]*b[2][j];}}return r;}
+function rot(alpha,beta,gamma){
+ const z=alpha*Math.PI/180,x=beta*Math.PI/180,y=gamma*Math.PI/180;
+ const Rz=[[Math.cos(z),-Math.sin(z),0],[Math.sin(z),Math.cos(z),0],[0,0,1]];
+ const Rx=[[1,0,0],[0,Math.cos(x),-Math.sin(x)],[0,Math.sin(x),Math.cos(x)]];
+ const Ry=[[Math.cos(y),0,Math.sin(y)],[0,1,0],[-Math.sin(y),0,Math.cos(y)]];
+ return matMul(matMul(Rz,Rx),Ry);
+}
+const V=[];for(const x of[-1,1])for(const y of[-2,2])for(const z of[-.2,.2])V.push([x,y,z]);
+const E=[];for(let i=0;i<8;i++)for(let j=i+1;j<8;j++){let df=0;for(let k=0;k<3;k++)if(V[i][k]!==V[j][k])df++;if(df===1)E.push([i,j]);}
+
+function draw3d(){
+ const c=$('c3'),g=c.getContext('2d'),W=c.width,Hh=c.height;g.clearRect(0,0,W,Hh);
+ if(d&&d.o&&d.o[1]!=null){
+  const R=rot((d.o[0]||0)-zeroA,d.o[1]||0,d.o[2]||0);
+  const view=[[1,0,0],[0,Math.cos(-1.0),-Math.sin(-1.0)],[0,Math.sin(-1.0),Math.cos(-1.0)]];
+  const P=V.map(v=>{
+   const w=[0,1,2].map(i=>R[i][0]*v[0]+R[i][1]*v[1]+R[i][2]*v[2]);
+   const q=[0,1,2].map(i=>view[i][0]*w[0]+view[i][1]*w[1]+view[i][2]*w[2]);
+   return [W/2+q[0]*70,Hh/2-q[1]*70,q[2]];});
+  g.strokeStyle='#3b82f6';g.lineWidth=2;
+  for(const[i,j]of E){g.beginPath();g.moveTo(P[i][0],P[i][1]);g.lineTo(P[j][0],P[j][1]);g.stroke();}
+  g.fillStyle='#e8e8ee';g.font='13px system-ui';g.fillText('Screen faces +z. Tilt, spin and roll the phone.',10,20);
+ }else{g.fillStyle='#888';g.font='16px system-ui';g.fillText('waiting for orientation data...',20,40);}
+ const ch=$('ch'),h=ch.getContext('2d'),w=ch.width,hh=ch.height;h.clearRect(0,0,w,hh);
+ h.strokeStyle='#262a37';h.beginPath();h.moveTo(0,hh/2);h.lineTo(w,hh/2);h.stroke();
+ const cols=['#ef4444','#22c55e','#3b82f6'],sc=[hh/2/180,hh/2/90,hh/2/360];
+ for(let k=0;k<3;k++){
+  h.strokeStyle=cols[k];h.beginPath();
+  H.forEach((p,i)=>{const x=i/N*w,y=k===2?hh-(p[2]*sc[2]*2):hh/2-p[k]*sc[k];i?h.lineTo(x,y):h.moveTo(x,y);});
+  h.stroke();}
+ requestAnimationFrame(draw3d);
+}
+draw3d();
+</script></body></html>
